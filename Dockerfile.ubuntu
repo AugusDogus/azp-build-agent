@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y \
     git \
     jq \
     iputils-ping \
-    libicu70 \
+    libicu74 \
     wget \
     unzip \
     && rm -rf /var/lib/apt/lists/*
