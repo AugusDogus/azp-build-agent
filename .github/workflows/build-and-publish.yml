@@ -10,6 +10,55 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get latest commit info
+        id: commit
+        run: |
+          echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+
+      - name: Create/Update Latest Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: latest
+          name: "Latest Build (${{ steps.commit.outputs.date }})"
+          body: |
+            ## 🚀 Latest Docker Images
+
+            Built from commit: `${{ github.sha }}`
+
+            ### Pull the images:
+
+            **Alpine variant (lightweight):**
+            ```bash
+            docker pull ghcr.io/${{ github.repository }}:alpine
+            ```
+
+            **Ubuntu variant (full compatibility):**
+            ```bash
+            docker pull ghcr.io/${{ github.repository }}:ubuntu
+            ```
+
+            **Latest (Ubuntu):**
+            ```bash
+            docker pull ghcr.io/${{ github.repository }}:latest
+            ```
+
+                      ### Changes in this build:
+                      ${{ github.event.head_commit.message }}
+                  prerelease: false
+
   build-and-push-alpine:
     name: Build and Push Alpine
     runs-on: ubuntu-latest
