@@ -33,7 +33,29 @@ Both variants use rolling release base images (`python:3-alpine` and `ubuntu:lat
 
 ## Quick Start
 
-### 1. Build the Docker Image
+### Option 1: Use Pre-built Images (Recommended)
+
+Pull pre-built images from GitHub Container Registry:
+
+**Alpine (lightweight):**
+```bash
+docker pull ghcr.io/OWNER/REPO:alpine
+# or
+docker pull ghcr.io/OWNER/REPO:latest-alpine
+```
+
+**Ubuntu (with Playwright support):**
+```bash
+docker pull ghcr.io/OWNER/REPO:ubuntu
+# or
+docker pull ghcr.io/OWNER/REPO:latest-ubuntu
+# or
+docker pull ghcr.io/OWNER/REPO:latest
+```
+
+> **Note:** Replace `OWNER/REPO` with your GitHub username and repository name (lowercase).
+
+### Option 2: Build Locally
 
 **Alpine (lightweight):**
 ```bash
@@ -218,15 +240,22 @@ The agent container:
 - **Token security**: Never commit tokens to version control; use secrets management
 - **Network isolation**: Consider running agents in isolated networks or VPCs
 
-## Continuous Integration
+## Continuous Integration & Publishing
 
-This project includes a GitHub Actions workflow (`.github/workflows/test-images.yml`) that:
+This project includes two GitHub Actions workflows:
+
+### Testing (`.github/workflows/test-images.yml`)
 - ✅ Tests both Docker variants automatically
 - ✅ Runs weekly to catch breaking changes in base images
 - ✅ Runs on every push/PR that modifies Dockerfiles
 - ✅ Verifies basic functionality (Docker, Git, Azure CLI)
 
-The workflow performs smoke tests to ensure containers start correctly and required tools are available. This allows us to use rolling release base images while catching incompatibilities early.
+### Build & Publish (`.github/workflows/build-and-publish.yml`)
+- ✅ Automatically builds and publishes images to GitHub Container Registry
+- ✅ Runs on every push to `main` branch
+- ✅ Tags images as `:alpine`, `:latest-alpine`, `:ubuntu`, `:latest-ubuntu`, and `:latest`
+
+Every push to `main` automatically publishes the latest images - no manual tagging required!
 
 ## License
 
