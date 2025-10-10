@@ -2,8 +2,25 @@
 set -e
 
 if ! docker info >/dev/null 2>&1; then
+  # Clean up stale containerd state that can prevent startup
+  rm -rf /var/run/docker/containerd/containerd.sock.ttrpc /var/run/docker/containerd/containerd.sock
+  rm -rf /run/containerd/containerd.sock.ttrpc /run/containerd/containerd.sock
+  
   dockerd >/tmp/dockerd.log 2>&1 &
-  until docker info >/dev/null 2>&1; do sleep 1; done
+  
+  # Wait up to 60 seconds for docker to start
+  WAIT_TIME=0
+  until docker info >/dev/null 2>&1 || [ $WAIT_TIME -eq 60 ]; do
+    sleep 1
+    WAIT_TIME=$((WAIT_TIME + 1))
+  done
+  
+  # If docker still isn't running, log error and exit to trigger container restart
+  if ! docker info >/dev/null 2>&1; then
+    echo "ERROR: Docker daemon failed to start within 60 seconds" >&2
+    cat /tmp/dockerd.log >&2
+    exit 1
+  fi
 fi
 
 if [ -z "${AZP_URL}" ]; then
