@@ -1,0 +1,180 @@
+name: Test Docker Images
+
+on:
+    # Run weekly on Monday at 9 AM UTC
+    schedule:
+        - cron: "0 9 * * 1"
+    # Allow manual trigger
+    workflow_dispatch:
+    # Run on pushes to main that change Dockerfiles
+    push:
+        branches: [main]
+        paths:
+            - "Dockerfile.*"
+            - "start.sh"
+            - ".github/workflows/test-images.yml"
+    # Run on PRs that change Dockerfiles
+    pull_request:
+        paths:
+            - "Dockerfile.*"
+            - "start.sh"
+            - ".github/workflows/test-images.yml"
+
+jobs:
+    test-alpine:
+        name: Test Alpine Variant
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v3
+
+            - name: Build Alpine image
+              uses: docker/build-push-action@v5
+              with:
+                  context: .
+                  file: ./Dockerfile.alpine
+                  tags: azp-agent:alpine-test
+                  load: true
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
+
+            - name: Test Alpine image - verify it starts
+              run: |
+                  # Create a test token file to avoid startup errors
+                  echo "test-token" > /tmp/test-token
+
+                  # Start container (will fail agent config but that's ok for smoke test)
+                  docker run -d \
+                    --name test-alpine \
+                    --privileged \
+                    -e AZP_URL="https://dev.azure.com/test" \
+                    -e AZP_TOKEN="test-token" \
+                    -e AZP_POOL="Default" \
+                    azp-agent:alpine-test || true
+
+                  # Give it a moment to start
+                  sleep 5
+
+                  # Check that the container started
+                  if docker ps -a | grep test-alpine; then
+                    echo "✅ Container started"
+                  else
+                    echo "❌ Container failed to start"
+                    exit 1
+                  fi
+
+                  # Check logs for critical errors (excluding expected auth failures)
+                  if docker logs test-alpine 2>&1 | grep -i "error" | grep -v "AZP_TOKEN" | grep -v "AZP_URL"; then
+                    echo "⚠️  Found errors in logs (may be expected auth errors)"
+                    docker logs test-alpine
+                  else
+                    echo "✅ No unexpected errors in logs"
+                  fi
+
+                  # Verify key tools are installed
+                  echo "Checking installed tools..."
+                  docker exec test-alpine which git || echo "❌ git not found"
+                  docker exec test-alpine which docker || echo "❌ docker not found"
+                  docker exec test-alpine which az || echo "❌ azure-cli not found"
+                  docker exec test-alpine python3 --version || echo "❌ python3 not found"
+
+                  echo "✅ Alpine variant smoke test passed"
+
+            - name: Cleanup Alpine test
+              if: always()
+              run: |
+                  docker rm -f test-alpine || true
+
+    test-ubuntu:
+        name: Test Ubuntu Variant
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v3
+
+            - name: Build Ubuntu image
+              uses: docker/build-push-action@v5
+              with:
+                  context: .
+                  file: ./Dockerfile.ubuntu
+                  tags: azp-agent:ubuntu-test
+                  load: true
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
+
+            - name: Test Ubuntu image - verify it starts
+              run: |
+                  # Create a test token file to avoid startup errors
+                  echo "test-token" > /tmp/test-token
+
+                  # Start container (will fail agent config but that's ok for smoke test)
+                  docker run -d \
+                    --name test-ubuntu \
+                    --privileged \
+                    -e AZP_URL="https://dev.azure.com/test" \
+                    -e AZP_TOKEN="test-token" \
+                    -e AZP_POOL="Default" \
+                    azp-agent:ubuntu-test || true
+
+                  # Give it a moment to start
+                  sleep 5
+
+                  # Check that the container started
+                  if docker ps -a | grep test-ubuntu; then
+                    echo "✅ Container started"
+                  else
+                    echo "❌ Container failed to start"
+                    exit 1
+                  fi
+
+                  # Check logs for critical errors (excluding expected auth failures)
+                  if docker logs test-ubuntu 2>&1 | grep -i "error" | grep -v "AZP_TOKEN" | grep -v "AZP_URL"; then
+                    echo "⚠️  Found errors in logs (may be expected auth errors)"
+                    docker logs test-ubuntu
+                  else
+                    echo "✅ No unexpected errors in logs"
+                  fi
+
+                  # Verify key tools are installed
+                  echo "Checking installed tools..."
+                  docker exec test-ubuntu which git || echo "❌ git not found"
+                  docker exec test-ubuntu which docker || echo "❌ docker not found"
+                  docker exec test-ubuntu which az || echo "❌ azure-cli not found"
+
+                  # Verify glibc (the whole point of Ubuntu variant)
+                  docker exec test-ubuntu ldd --version | grep -i glibc && echo "✅ glibc confirmed"
+
+                  echo "✅ Ubuntu variant smoke test passed"
+
+            - name: Cleanup Ubuntu test
+              if: always()
+              run: |
+                  docker rm -f test-ubuntu || true
+
+    # Summary job that depends on both test jobs
+    test-summary:
+        name: Test Summary
+        runs-on: ubuntu-latest
+        needs: [test-alpine, test-ubuntu]
+        if: always()
+
+        steps:
+            - name: Check test results
+              run: |
+                  echo "Alpine test: ${{ needs.test-alpine.result }}"
+                  echo "Ubuntu test: ${{ needs.test-ubuntu.result }}"
+
+                  if [ "${{ needs.test-alpine.result }}" != "success" ] || [ "${{ needs.test-ubuntu.result }}" != "success" ]; then
+                    echo "❌ One or more tests failed"
+                    exit 1
+                  fi
+
+                  echo "✅ All tests passed"

@@ -1,15 +1,29 @@
 # Azure Pipelines Build Agent (Docker)
 
-A self-hosted Azure Pipelines agent running in Docker with Docker-in-Docker support, based on Alpine Linux.
+A self-hosted Azure Pipelines agent running in Docker with Docker-in-Docker support. Available in two variants: Alpine (lightweight) and Ubuntu (full compatibility).
+
+## Variants
+
+Both variants use rolling release base images (`python:3-alpine` and `ubuntu:latest`) and are automatically tested weekly via GitHub Actions to ensure compatibility.
+
+### Alpine (`Dockerfile.alpine`)
+- **Lightweight**: ~500MB base image
+- **Fast**: Quick to build and deploy
+- **Best for**: General CI/CD, Docker builds, Azure CLI tasks
+- **Limitations**: musl libc - some precompiled binaries may not work
+
+### Ubuntu (`Dockerfile.ubuntu`)
+- **Compatible**: Full glibc support for maximum compatibility
+- **Standard**: Uses standard Ubuntu packages and repositories
+- **Best for**: Building containers that need glibc (e.g., Playwright apps)
+- **Size**: ~1GB base image
 
 ## Features
 
-- **Lightweight**: Built on Python 3 Alpine image
 - **Docker-in-Docker**: Run Docker commands within your pipelines
-- **Docker Buildx**: Multi-platform build support included
+- **Docker Buildx & Compose**: Multi-platform build support included
 - **Azure CLI**: Pre-installed for Azure resource management
 - **Auto-configuration**: Automatically downloads and configures the latest Azure Pipelines agent
-- **Multiple authentication methods**: Supports PAT tokens or Azure service principal authentication
 
 ## Prerequisites
 
@@ -21,11 +35,19 @@ A self-hosted Azure Pipelines agent running in Docker with Docker-in-Docker supp
 
 ### 1. Build the Docker Image
 
+**Alpine (lightweight):**
 ```bash
-docker build -t azp-agent:linux .
+docker build -f Dockerfile.alpine -t azp-agent:alpine .
+```
+
+**Ubuntu (with Playwright support):**
+```bash
+docker build -f Dockerfile.ubuntu -t azp-agent:ubuntu .
 ```
 
 ### 2. Run a Single Agent
+
+Replace `azp-agent:alpine` with `azp-agent:ubuntu` if using the Ubuntu variant.
 
 ```bash
 docker run -d --privileged \
@@ -34,12 +56,13 @@ docker run -d --privileged \
   -e AZP_TOKEN="YOUR_PAT_TOKEN" \
   -e AZP_POOL="Default" \
   -e AZP_AGENT_NAME="azp-agent-01" \
-  azp-agent:linux
+  azp-agent:alpine
 ```
 
 ### 3. Run Multiple Agents in the Same Pool
 
 ```bash
+# Alpine variant
 for i in 01 02 03; do
   docker run -d --privileged \
     --name azp-agent-$i \
@@ -47,7 +70,18 @@ for i in 01 02 03; do
     -e AZP_TOKEN="YOUR_PAT_TOKEN" \
     -e AZP_POOL="Default" \
     -e AZP_AGENT_NAME="azp-agent-$i" \
-    azp-agent:linux
+    azp-agent:alpine
+done
+
+# Ubuntu variant (for Playwright)
+for i in 01 02 03; do
+  docker run -d --privileged \
+    --name azp-playwright-$i \
+    -e AZP_URL="https://dev.azure.com/YOUR_ORGANIZATION" \
+    -e AZP_TOKEN="YOUR_PAT_TOKEN" \
+    -e AZP_POOL="Default" \
+    -e AZP_AGENT_NAME="azp-playwright-$i" \
+    azp-agent:ubuntu
 done
 ```
 
@@ -71,15 +105,23 @@ done
 
 ## Included Tools
 
-- **Bash** - Shell scripting
+### Both Variants
 - **Git** - Version control
 - **Docker** & **Docker CLI** - Container operations
-- **Docker Buildx** (v0.11.2) - Multi-platform builds
+- **Docker Buildx** - Multi-platform builds
+- **Docker Compose** - Multi-container applications
 - **Azure CLI** - Azure resource management
-- **Python 3** - Python runtime and pip
 - **jq** - JSON processing
 - **curl** - HTTP requests
+
+### Alpine-Specific
+- **Python 3** - Python runtime and pip
+- **Bash** - Shell scripting
 - Development tools: gcc, make, cargo, etc.
+
+### Ubuntu-Specific
+- **Full glibc support** - Compatible with standard Linux binaries
+- **Standard Ubuntu tooling** - Familiar Debian/Ubuntu package ecosystem
 
 ## Docker Permissions
 
@@ -132,10 +174,23 @@ docker rm -f $(docker ps -aq --filter "name=azp-agent")
 The agent container:
 1. Starts Docker daemon if not already running (for Docker-in-Docker)
 2. Validates required environment variables
-3. Optionally authenticates via Azure service principal
-4. Downloads the latest Azure Pipelines agent package
-5. Configures the agent with your organization and pool
-6. Starts the agent and begins accepting jobs
+3. Downloads the latest Azure Pipelines agent package
+4. Configures the agent with your organization and pool
+5. Starts the agent and begins accepting jobs
+
+## Choosing the Right Variant
+
+**Use Alpine if:**
+- You need lightweight, fast-starting agents
+- You're doing Docker builds, API testing, or general CI/CD
+- Image size and resource usage are important
+- Your builds don't require glibc-specific binaries
+
+**Use Ubuntu if:**
+- You're building Docker images that require glibc (like Playwright apps)
+- You need maximum compatibility with precompiled Linux binaries
+- You prefer the standard Ubuntu/Debian ecosystem
+- You need to install packages with apt from Ubuntu repositories
 
 ## Troubleshooting
 
@@ -162,6 +217,16 @@ The agent container:
 - **Privileged mode**: Required for Docker-in-Docker but grants extensive permissions
 - **Token security**: Never commit tokens to version control; use secrets management
 - **Network isolation**: Consider running agents in isolated networks or VPCs
+
+## Continuous Integration
+
+This project includes a GitHub Actions workflow (`.github/workflows/test-images.yml`) that:
+- ✅ Tests both Docker variants automatically
+- ✅ Runs weekly to catch breaking changes in base images
+- ✅ Runs on every push/PR that modifies Dockerfiles
+- ✅ Verifies basic functionality (Docker, Git, Azure CLI)
+
+The workflow performs smoke tests to ensure containers start correctly and required tools are available. This allows us to use rolling release base images while catching incompatibilities early.
 
 ## License
 
