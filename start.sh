@@ -1,12 +1,21 @@
 #!/bin/bash
 set -e
 
+# DinD note: Running dockerd inside a container often fails with overlay-on-overlay
+# during `docker build`. Default to a conservative storage driver unless overridden.
+: "${DOCKER_STORAGE_DRIVER:=vfs}"
+: "${DOCKERD_EXTRA_ARGS:=}"
+
 if ! docker info >/dev/null 2>&1; then
   # Clean up stale containerd state that can prevent startup
   rm -rf /var/run/docker/containerd/containerd.sock.ttrpc /var/run/docker/containerd/containerd.sock
   rm -rf /run/containerd/containerd.sock.ttrpc /run/containerd/containerd.sock
   
-  dockerd >/tmp/dockerd.log 2>&1 &
+  dockerd \
+    --host=unix:///var/run/docker.sock \
+    --storage-driver="${DOCKER_STORAGE_DRIVER}" \
+    ${DOCKERD_EXTRA_ARGS} \
+    >/tmp/dockerd.log 2>&1 &
   
   # Wait up to 60 seconds for docker to start
   WAIT_TIME=0
@@ -18,6 +27,7 @@ if ! docker info >/dev/null 2>&1; then
   # If docker still isn't running, log error and exit to trigger container restart
   if ! docker info >/dev/null 2>&1; then
     echo "ERROR: Docker daemon failed to start within 60 seconds" >&2
+    echo "dockerd storage driver: ${DOCKER_STORAGE_DRIVER}" >&2
     cat /tmp/dockerd.log >&2
     exit 1
   fi
