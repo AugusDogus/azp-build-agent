@@ -39,7 +39,16 @@ done
 | `ubuntu`, `latest` | Ubuntu 26.04 LTS | Default. glibc, so Playwright and most prebuilt tools work |
 | `alpine` | Alpine 3.24 (`python:3-alpine3.24`) | Smaller image when your toolchain works on musl |
 
-Each push to `main` also publishes `ubuntu-<sha>` and `alpine-<sha>` tags. Images are rebuilt every Monday to pick up security updates.
+To pin a version, use a release tag:
+
+| Tag | Changes when |
+|-----|--------------|
+| `2.0.0-ubuntu`, `2.0.0-alpine` (and `2.0.0` for Ubuntu) | Never |
+| `2.0-ubuntu`, `2-ubuntu`, ... | A newer 2.0.x / 2.x release comes out |
+| `ubuntu`, `alpine`, `latest` | Every push to `main`, and every Monday's rebuild with security updates |
+| `ubuntu-<sha>`, `alpine-<sha>` | Never (one per commit) |
+
+See [Releases](https://github.com/AugusDogus/azp-build-agent/releases) for what changed in each version.
 
 **Both:** Docker Engine and CLI, Buildx, Compose, Git, Azure CLI, jq, curl
 **Alpine also has:** Python 3, gcc, make, cargo
@@ -121,6 +130,14 @@ Removing a container does not remove the agent from the pool. Delete it under *A
 ## CI
 
 Every pull request, push to `main` and a weekly schedule build both images and check that the tools are installed, that the latest Azure Pipelines agent runs on them, and that Docker works in each mode. Pushes to `main` and the weekly run then publish to `ghcr.io`.
+
+To release, tag a commit on `main` and push the tag:
+
+```bash
+git tag v2.1.0 && git push origin v2.1.0
+```
+
+That runs the same tests, publishes the version tags above and creates a GitHub release with notes from the merged PRs. A tag with a suffix (`v2.1.0-rc.1`) becomes a pre-release.
 
 ## Security
 
