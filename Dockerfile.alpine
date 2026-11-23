@@ -1,21 +1,21 @@
-FROM python:3-alpine
+FROM python:3-alpine3.24
 
-ENV TARGETARCH="linux-musl-x64"
 ENV AGENT_ALLOW_RUNASROOT="true"
 
-RUN apk update && apk upgrade && apk add --no-cache \
-    bash curl git jq icu-libs docker docker-cli \
-    python3-dev libffi-dev openssl-dev gcc musl-dev make cargo
+RUN apk upgrade --no-cache && apk add --no-cache \
+    bash curl git jq icu-libs \
+    docker docker-cli docker-cli-buildx docker-cli-compose \
+    gcc musl-dev python3-dev libffi-dev openssl-dev make cargo
 
-RUN mkdir -p /usr/libexec/docker/cli-plugins && \
-    curl -sSL https://github.com/docker/buildx/releases/download/v0.11.2/buildx-v0.11.2.linux-amd64 \
-      -o /usr/libexec/docker/cli-plugins/docker-buildx && \
-    chmod +x /usr/libexec/docker/cli-plugins/docker-buildx
-
-RUN pip install --upgrade pip azure-cli
+# Azure CLI has no Alpine package, so it goes in its own virtualenv.
+RUN python3 -m venv /opt/az \
+    && /opt/az/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/az/bin/pip install --no-cache-dir azure-cli \
+    && ln -s /opt/az/bin/az /usr/local/bin/az
 
 WORKDIR /azp
 COPY start.sh .
-RUN chmod +x start.sh
+# Strip CRLF in case the repo was checked out on Windows.
+RUN sed -i 's/\r$//' start.sh && chmod +x start.sh
 
 ENTRYPOINT ["./start.sh"]

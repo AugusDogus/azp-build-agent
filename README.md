@@ -1,113 +1,129 @@
 # Azure Pipelines Docker Agent
 
-Self-hosted Azure Pipelines agents with Docker-in-Docker support. Choose Alpine (lightweight) or Ubuntu (full compatibility).
+Self-hosted Azure Pipelines agents in a container, with Docker available to your jobs either from the host or inside the container (Docker-in-Docker). Ubuntu is the default; Alpine is a smaller alternative.
 
 ## Quick Start
 
-### Pull Pre-built Images
-
 ```bash
-# Alpine (lightweight, ~500MB)
-docker pull ghcr.io/augustogus/azp-build-agent:alpine
-
-# Ubuntu (full compatibility, ~1GB) 
-docker pull ghcr.io/augustogus/azp-build-agent:ubuntu
-```
-
-### Run an Agent
-
-```bash
-docker run -d --privileged \
+docker run -d --restart unless-stopped \
   --name azp-agent-01 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   -e AZP_URL="https://dev.azure.com/YOUR_ORG" \
-  -e AZP_TOKEN="YOUR_PAT_TOKEN" \
+  -e AZP_TOKEN="YOUR_PAT" \
   -e AZP_POOL="Default" \
   -e AZP_AGENT_NAME="azp-agent-01" \
-  ghcr.io/augustogus/azp-build-agent:alpine
+  ghcr.io/augusdogus/azp-build-agent:ubuntu
 ```
 
-### Run Multiple Agents
+The agent registers itself in the pool, downloads the latest agent release for your organization, and starts taking jobs.
+
+### Run several agents
 
 ```bash
 for i in 01 02 03; do
-  docker run -d --privileged \
+  docker run -d --restart unless-stopped \
     --name azp-agent-$i \
+    -v /var/run/docker.sock:/var/run/docker.sock \
     -e AZP_URL="https://dev.azure.com/YOUR_ORG" \
-    -e AZP_TOKEN="YOUR_PAT_TOKEN" \
+    -e AZP_TOKEN="YOUR_PAT" \
     -e AZP_POOL="Default" \
     -e AZP_AGENT_NAME="azp-agent-$i" \
-    ghcr.io/augustogus/azp-build-agent:alpine
+    ghcr.io/augusdogus/azp-build-agent:ubuntu
 done
 ```
 
-## Variants
+## Images
 
-| Variant | Size | Base Image | Use Case |
-|---------|------|------------|----------|
-| **Alpine** | ~500MB | `python:3-alpine` | General CI/CD, Docker builds, lightweight deployments |
-| **Ubuntu** | ~1GB | `ubuntu:latest` | Playwright, browser testing, maximum compatibility |
+| Tag | Base | Use it for |
+|-----|------|------------|
+| `ubuntu`, `latest` | Ubuntu 26.04 LTS | Default. glibc, so Playwright and most prebuilt tools work |
+| `alpine` | Alpine 3.24 (`python:3-alpine3.24`) | Smaller image when your toolchain works on musl |
 
-**Choose Ubuntu if** you need glibc for tools like Playwright, otherwise use Alpine.
+Each push to `main` also publishes `ubuntu-<sha>` and `alpine-<sha>` tags. Images are rebuilt every Monday to pick up security updates.
 
-## Environment Variables
+**Both:** Docker Engine and CLI, Buildx, Compose, Git, Azure CLI, jq, curl
+**Alpine also has:** Python 3, gcc, make, cargo
+
+## Docker for your jobs
+
+Pick one with `AZP_DOCKER_MODE`:
+
+| Mode | How | Notes |
+|------|-----|-------|
+| Host daemon | `-v /var/run/docker.sock:/var/run/docker.sock` | Simplest and fastest. Jobs share the host's images, build cache and disk, so clean up on the host (see below). Anyone who can run a pipeline on this pool effectively has root on the host. |
+| Docker-in-Docker | `--privileged -v azp-docker-01:/var/lib/docker` | Each agent has its own daemon. Use one volume per agent. Without the volume the daemon falls back to the `vfs` storage driver, which copies every image layer in full and fills disks quickly. |
+| None | `-e AZP_DOCKER_MODE=none` | For agents that never need Docker. |
+
+The default, `auto`, uses a mounted host socket if there is one, otherwise starts Docker-in-Docker, and if that isn't possible (no `--privileged`) starts the agent without Docker and logs a warning. Set `host` or `dind` to fail at startup instead.
+
+### Disk space
+
+Build agents fill disks: images built by jobs, build cache, and each pipeline's `_work` folder. Plan for it:
+
+- **Host daemon:** schedule `docker system prune -af --filter "until=48h"` on the host (a systemd timer or cron job), and alert on free space.
+- **Docker-in-Docker:** run the same prune inside each agent: `docker exec azp-agent-01 docker system prune -af --filter "until=48h"`.
+- **Pipeline folders:** turn on *Agent pools > your pool > Settings > Maintenance jobs* in Azure DevOps to delete old `_work` folders.
+
+## Sign-in options
+
+The agent needs a credential that can register agents in the pool (Agent Pools: Read & manage). Use one of:
+
+| Variables | Credential |
+|-----------|------------|
+| `AZP_TOKEN` or `AZP_TOKEN_FILE` | Personal access token |
+| `AZP_AUTH_CLIENTID` | User-assigned managed identity (Azure VMs, Container Apps). The identity must be added to the Azure DevOps organization with access to the pool. |
+| `AZP_CLIENTID`, `AZP_CLIENTSECRET`, `AZP_TENANTID` | Service principal, added to the organization the same way |
+
+## Environment variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `AZP_URL` | ✅ | Azure DevOps org URL (e.g., `https://dev.azure.com/yourorg`) |
-| `AZP_TOKEN` | ✅ | PAT with Agent Pools (Read & Manage) permission |
-| `AZP_POOL` | ✅ | Agent pool name (default: `Default`) |
-| `AZP_AGENT_NAME` | ❌ | Custom agent name (default: hostname) |
-| `AZP_WORK` | ❌ | Working directory (default: `_work`) |
-| `AZP_TOKEN_FILE` | ❌ | Path to token file (alternative to `AZP_TOKEN`) |
+| `AZP_URL` | Yes | Organization URL, e.g. `https://dev.azure.com/yourorg` |
+| `AZP_TOKEN` / `AZP_TOKEN_FILE` / `AZP_AUTH_CLIENTID` / `AZP_CLIENTID` | One of these | See [Sign-in options](#sign-in-options) |
+| `AZP_POOL` | No | Agent pool (default `Default`) |
+| `AZP_AGENT_NAME` | No | Agent name (default: container hostname) |
+| `AZP_WORK` | No | Work folder (default `_work`) |
+| `AZP_DOCKER_MODE` | No | `auto` (default), `host`, `dind` or `none` |
+| `DOCKER_STORAGE_DRIVER` | No | Force a Docker-in-Docker storage driver |
+| `DOCKERD_EXTRA_ARGS` | No | Extra `dockerd` flags for Docker-in-Docker |
+| `DOCKERD_START_TIMEOUT` | No | Seconds to wait for Docker-in-Docker (default 120) |
+| `AZP_AGENT_PLATFORM` | No | Agent package platform; detected automatically (`linux-x64`, `linux-arm64`, `linux-musl-x64`, ...) |
 
-## Included Tools
-
-**Both variants:** Docker, Docker Compose, Buildx, Git, Azure CLI, jq, curl  
-**Alpine only:** Python 3, pip, bash, gcc, make, cargo  
-**Ubuntu only:** glibc, standard apt packages
-
-## Build Locally
+## Build it yourself
 
 ```bash
-# Alpine
-docker build -f Dockerfile.alpine -t azp-agent:alpine .
-
-# Ubuntu
 docker build -f Dockerfile.ubuntu -t azp-agent:ubuntu .
+docker build -f Dockerfile.alpine -t azp-agent:alpine .
 ```
 
-## Managing Agents
+Builds work on amd64 and arm64 hosts; the agent package for the right CPU is picked at startup.
+
+## Managing agents
 
 ```bash
-# View logs
-docker logs azp-agent-01
-
-# Stop agent
-docker stop azp-agent-01
-
-# Remove agent
-docker rm -f azp-agent-01
-
-# Stop all
-docker stop $(docker ps -q --filter "name=azp-agent")
+docker logs -f azp-agent-01        # follow logs
+docker stop azp-agent-01           # stop gracefully (the agent finishes shutting down)
+docker rm -f azp-agent-01          # remove the container
 ```
+
+Removing a container does not remove the agent from the pool. Delete it under *Agent pools > your pool > Agents*, or start a new container with the same `AZP_AGENT_NAME` to replace it.
 
 ## Troubleshooting
 
-**Agent not appearing?** Check `AZP_URL`, PAT permissions, pool exists, and logs: `docker logs azp-agent-01`
+**Agent doesn't appear in the pool:** check `AZP_URL`, the credential's permissions and that the pool exists. Startup errors are in `docker logs`.
 
-**Docker commands failing?** Ensure `--privileged` flag is set
+**`Cannot connect to the Docker daemon`:** with the host socket, check the host's Docker service is running (an OS update can restart or replace it, so restart the agents after Docker updates). With Docker-in-Docker, check the container runs with `--privileged`.
 
-**Agent disconnecting?** Check host resources (CPU/memory/disk) and network connectivity
+**`No space left on device`:** see [Disk space](#disk-space).
 
-## CI/CD
+**`start.sh: not found` or `bad interpreter` after cloning on Windows:** the image strips Windows line endings at build time, and `.gitattributes` keeps them out of checkouts.
 
-- **Testing**: Weekly automated tests catch upstream breaking changes
-- **Publishing**: Every push to `main` publishes `:alpine`, `:ubuntu`, and `:latest` tags to ghcr.io
-- **Monitoring**: GitHub Actions verify both variants build and start correctly
+## CI
+
+Every pull request, push to `main` and a weekly schedule build both images and check that the tools are installed, that the latest Azure Pipelines agent runs on them, and that Docker works in each mode. Pushes to `main` and the weekly run then publish to `ghcr.io`.
 
 ## Security
 
-⚠️ Requires `--privileged` mode for Docker-in-Docker  
-🔒 Never commit tokens - use secrets management  
-🌐 Consider network isolation for production agents
+- Docker-in-Docker needs `--privileged`; mounting the host socket gives jobs root on the host. Only run pipelines you trust on these agents.
+- Pass tokens with your secret manager or `AZP_TOKEN_FILE`, never in the image or the repo.
+- Keep agents off the public internet; they only need outbound HTTPS to Azure DevOps.
